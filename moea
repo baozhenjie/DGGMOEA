@@ -1,0 +1,616 @@
+from pygmo import hypervolume
+from tensorflow.keras.models import Model, Sequential
+from tensorflow.keras.layers import Dense, Input, LeakyReLU, BatchNormalization, Dropout
+from tensorflow.keras.optimizers import Adam
+import tensorflow as tf
+import time
+import random
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad, unpad
+from Crypto.Random import get_random_bytes
+import lzma, zlib, lz4.frame, snappy, bz2
+from cassandra.cluster import Cluster
+from cassandra.auth import PlainTextAuthProvider
+import uuid
+from scipy.spatial import distance_matrix
+from scipy.spatial import ConvexHull
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+import ore
+import random
+def truncate_archive(archive, target_size):
+ 
+    while len(archive) > target_size:
+      
+        objectives_matrix = np.array([ind.objectives for ind in archive])
+        dist_matrix = distance_matrix(objectives_matrix, objectives_matrix)
+        np.fill_diagonal(dist_matrix, np.inf)  
+        
+
+        min_dists = np.min(dist_matrix, axis=1)
+    
+        min_idx = np.argmin(min_dists)
+        
+      
+        archive.pop(min_idx)
+    
+    return archive
+class GANimproved:
+    def __init__(self, latent_dim, decision_dim):
+        self.latent_dim = latent_dim
+        self.decision_dim = decision_dim
+        
+  
+        self.discriminator = self.build_discriminator()
+        self.discriminator.compile(loss='mse',
+                                   optimizer=Adam(0.0002, 0.5),
+                                   metrics=['accuracy'])
+        
+    
+        self.generator = self.build_generator()
+        
+
+        self.discriminator.trainable = False
+        z = Input(shape=(self.latent_dim,))
+        generated_solution = self.generator(z)
+        validity = self.discriminator(generated_solution)
+        self.combined = Model(z, validity)
+        self.combined.compile(loss='mse', optimizer=Adam(0.0002, 0.5))
+        self.d_loss_history = []  
+        self.g_loss_history = [] 
+    def build_generator(self):
+        model = Sequential()
+        model.add(Dense(256, input_dim=self.latent_dim))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(BatchNormalization(momentum=0.8))
+        model.add(Dense(512))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(BatchNormalization(momentum=0.8))
+        model.add(Dense(1024))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(BatchNormalization(momentum=0.8))
+        model.add(Dense(self.decision_dim, activation='linear'))
+        return model
+    
+    def build_discriminator(self):
+        model = Sequential()
+        model.add(Dense(512, input_dim=self.decision_dim))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(Dropout(0.3))
+        model.add(Dense(256))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(Dropout(0.3))
+        model.add(Dense(128))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(Dense(1, activation='linear'))
+        return model
+    
+    def train(self, archive_samples, rejected_samples, epochs=100, batch_size=32):
+
+        valid = np.ones((batch_size, 1))*(1.)
+        gen = np.ones((batch_size, 1))*(0.)
+        fake = np.ones((batch_size, 1))*(-1.)
+        epoch_d_losses = []  
+        epoch_g_losses = []  
+        for epoch in range(epochs):
+         
+            idx = np.random.randint(0, archive_samples.shape[0], batch_size)
+            real_data = archive_samples[idx]
+            d_loss_real = self.discriminator.train_on_batch(real_data, valid)
+            
+    
+            idx = np.random.randint(0, rejected_samples.shape[0], batch_size)
+            rejected_data = rejected_samples[idx]
+            d_loss_rejected = self.discriminator.train_on_batch(rejected_data, fake)
+           
+            noise = np.random.normal(0, 1, (batch_size, self.latent_dim))
+            gen_data = self.generator.predict(noise)
+            d_loss_fake = self.discriminator.train_on_batch(gen_data, gen)
+            
+   
+            d_loss =  d_loss_real + d_loss_rejected +  d_loss_fake
+            
+
+            mean = np.mean(archive_samples, axis=0)
+            cov = np.cov(archive_samples, rowvar=False)
+            
+       
+            cov += np.eye(cov.shape[0]) * 1e-6
+            
+  
+            mean = np.mean(archive_samples, axis=0)
+            cov = np.cov(archive_samples, rowvar=False)
+            
+        
+            cov += np.eye(cov.shape[0]) * 1e-6
+            
+         
+            noise = np.random.multivariate_normal(mean, cov, batch_size)
+            g_loss = self.combined.train_on_batch(noise, valid)
+
+    def generate_samples(self, archive_samples,n_samples):
+    
+    
+        mean = np.mean(archive_samples, axis=0)
+        cov = np.cov(archive_samples, rowvar=False)
+   
+        cov += np.eye(cov.shape[0]) * 1e-6
+        
+
+        noise = np.random.multivariate_normal(mean, cov, n_samples)
+        return self.generator.predict(noise)
+
+
+class CassandraManager:
+    def __init__(self, contact_points=[''], port=9042, 
+                 keyspace="compression_test", table="compressed_data"):
+   
+        auth_provider = PlainTextAuthProvider(username='cassandra', password='cassandra')
+        self.cluster = Cluster(
+            contact_points=contact_points,
+            port=port,
+            auth_provider=auth_provider,
+            connect_timeout=30,
+            idle_heartbeat_interval=30  
+        )
+        self.session = self.cluster.connect()
+        self.keyspace = keyspace
+        self.table = table
+        
+     
+        self._setup_database()
+    
+    def _setup_database(self):
+    
+        #self.delete_keyspace()
+        self.session.execute(f"""
+            CREATE KEYSPACE IF NOT EXISTS {self.keyspace}
+            WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': 1}}
+        """)
+        
+        self.session.execute(f"USE {self.keyspace}")
+        
+    
+        self.session.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.table} (
+                id UUID PRIMARY KEY,
+                compressed_data BLOB
+            )
+        """)
+    
+    def upload_data(self, algorithm, compressed_data):
+    
+        query = self.session.prepare(f"""
+            INSERT INTO {self.table} (id, compressed_data)
+            VALUES (?, ?)
+        """)
+
+
+     
+        key = ore.generate_key()
+ 
+        cipher = ore.Cipher(key)
+     
+        plaintext = random.randint(0, 2000000)
+  
+        ciphertext = cipher.encrypt(plaintext)
+        data_id = ciphertext
+      
+        
+       
+        start_time = time.time()
+        self.session.execute(query, (data_id, compressed_data))
+        upload_time = (time.time() - start_time) * 1000 
+        
+        return data_id, upload_time
+    
+    def download_data(self, data_id):
+    
+        query = self.session.prepare(f"""
+            SELECT compressed_data FROM {self.table} WHERE id = ?
+        """)
+        
+ 
+        start_time = time.time()
+        result = self.session.execute(query, [data_id])
+        download_time = (time.time() - start_time) * 1000 
+        
+        if result:
+            return result[0].compressed_data, download_time
+        return None, download_time
+    
+    def delete_table(self):
+      
+        try:
+            #print(f"准备删除表: {self.table}...")
+            self.session.execute(f"DROP TABLE IF EXISTS {self.table}")
+            #print(f"表 {self.table} 删除成功")
+        except Exception as e:
+            print(f"删除表时出错: {e}")
+    
+    def delete_keyspace(self):
+       
+        try:
+            #print(f"准备删除键空间: {self.keyspace}...")
+            self.session.execute(f"DROP KEYSPACE IF EXISTS {self.keyspace}")
+            #print(f"键空间 {self.keyspace} 删除成功")
+        except Exception as e:
+            print(f"删除键空间时出错: {e}")
+    def close(self):
+       
+        self.delete_table()
+        self.session.shutdown()
+        self.cluster.shutdown()
+
+def compress_data(raw_data, algo_name):
+
+    start_compress = time.time()
+    
+    if algo_name == "lzma":
+        compressed = lzma.compress(raw_data, preset=9)
+    elif algo_name == "zlib":
+        compressed = zlib.compress(raw_data, level=9)
+    elif algo_name == "lz4":
+        compressed = lz4.frame.compress(raw_data, compression_level=9)
+    elif algo_name == "snappy":
+        compressed = snappy.compress(raw_data)
+    elif algo_name == "bz2":
+        compressed = bz2.compress(raw_data, compresslevel=9)
+    
+    compress_time = (time.time() - start_compress) * 1000
+    
+    return compressed, compress_time
+
+def decompress_data(compressed_data, algo_name):
+   
+    start_decompress = time.time()
+    
+    if algo_name == "lzma":
+        decompressed = lzma.decompress(compressed_data)
+    elif algo_name == "zlib":
+        decompressed = zlib.decompress(compressed_data)
+    elif algo_name == "lz4":
+        decompressed = lz4.frame.decompress(compressed_data)
+    elif algo_name == "snappy":
+        decompressed = snappy.decompress(compressed_data)
+    elif algo_name == "bz2":
+        decompressed = bz2.decompress(compressed_data)
+    
+    decompress_time = (time.time() - start_decompress) * 1000
+    
+    return decompressed, decompress_time
+
+def encrypt_data(compressed_data, key, iv):
+   
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    padded_data = pad(compressed_data, AES.block_size)
+    
+    start_encrypt = time.time()
+    ciphertext = cipher.encrypt(padded_data)
+    encrypt_time = (time.time() - start_encrypt) * 1000
+    
+    return ciphertext, encrypt_time
+
+def decrypt_data(encrypted_data, key, iv):
+
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    
+    start_decrypt = time.time()
+    decrypted_padded = cipher.decrypt(encrypted_data)
+    decrypted_data = unpad(decrypted_padded, AES.block_size)
+    decrypt_time = (time.time() - start_decrypt) * 1000
+    
+    return decrypted_data, decrypt_time
+
+
+
+class Individual:
+  
+    def __init__(self, algo_name, chunk_size):
+        self.algo_name = algo_name
+        self.chunk_size = chunk_size
+        self.objectives = [None, None] 
+        self.dominated = [] 
+        self.dom_count = 0 
+    def find_longest_row_pandas(self,csv_file):
+        try:
+           
+            df = pd.read_csv(csv_file)
+            if df.empty:
+                return [] 
+            
+            last_row = df.tail(1).values.tolist()[0]
+            print(last_row)
+     
+            matrix = [last_row.copy() for _ in range(self.chunk_size)]
+            print(len(last_row))
+           
+            return len(last_row),matrix
+        except Exception as e:
+            print(f"错误：{e}")
+            return []
+        
+    def evaluate(self, csv_path):
+  
+        cassandra = CassandraManager()
+        key = get_random_bytes(16)
+        iv = get_random_bytes(16)
+        
+        total_compressed_size = 0
+        chunk_total_time = 0
+        fw=2000.
+        fr=2000.
+
+
+  
+        chunk_df=pd.read_csv(csv_path, nrows=self.chunk_size)
+        raw_data = chunk_df.to_csv(index=False).encode('utf-8')
+
+ 
+        compressed_data, compress_time = compress_data(raw_data, self.algo_name)
+
+        
+        total_compressed_size= (len(compressed_data)/len(raw_data))*(200000.***)
+ 
+    
+        encrypted_data, encrypt_time = encrypt_data(compressed_data, key, iv)
+            
+  
+        data_id, upload_time = cassandra.upload_data(self.algo_name, encrypted_data)
+            
+    
+        downloaded_data, download_time = cassandra.download_data(data_id)
+            
+      
+        decrypted_data, decrypt_time = decrypt_data(downloaded_data, key, iv)
+            
+     
+        decompressed_data, decompress_time = decompress_data(decrypted_data, self.algo_name)
+       
+        download_time =download_time*10 
+        upload_time = upload_time*10
+    
+        chunk_total_time = (fw*compress_time + fw*encrypt_time + fw*upload_time + 
+                           (fw+fr)*download_time + (fw+fr)*decrypt_time + (fw+fr)*decompress_time)
+        #print(chunk_total_time/ (1000*3600.))
+        cassandra.close()
+        
+       
+        self.objectives = [total_compressed_size/ (1024 * 1024), chunk_total_time/ (1000*3600.)]
+        return self.objectives
+
+
+def dominates(ind1, ind2):
+
+    better_or_equal = all(f1 <= f2 for f1, f2 in zip(ind1.objectives, ind2.objectives))
+    strictly_better = any(f1 < f2 for f1, f2 in zip(ind1.objectives, ind2.objectives))
+    return better_or_equal and strictly_better
+
+def spea2_with_ganimproved(csv_path, pop_size=20, max_generations=10, archive_size=10):
+    algorithms = ["lzma", "zlib", "lz4", "snappy", "bz2"]
+    chunk_sizes = 200000
+    print('dggmoea')
+    start1 = time.time()
+    
+    k = int(np.sqrt(pop_size + archive_size))
+    
+
+    population = []
+    for _ in range(pop_size):
+        algo = random.choice(algorithms)
+        chunk_size = random.randint(1, chunk_sizes)
+        population.append(Individual(algo, chunk_size))
+    
+    archive = []
+    latent_dim = 6 
+    decision_dim = len(algorithms) + 1  
+    hv_history=[]
+    
+    gan = GANimproved(latent_dim, decision_dim)
+    
+    end1 = time.time()
+    print(1)
+    print(end1-start1)
+    
+    for gen in range(max_generations):
+        print(f"Generation {gen+1}/{max_generations}")
+        start2 = time.time()
+ 
+        combined = population + archive
+        
+      
+        for ind in combined:
+            if ind.objectives[0] is None:
+                ind.evaluate(csv_path)
+        
+    
+        for ind in combined:
+            ind.dominated = []
+            ind.dom_count = 0
+        
+
+        for i, ind1 in enumerate(combined):
+            for j, ind2 in enumerate(combined):
+                if i == j:
+                    continue
+                if dominates(ind1, ind2):
+                    ind1.dominated.append(j)
+                elif dominates(ind2, ind1):
+                    ind1.dom_count += 1
+        
+      
+        for i, ind in enumerate(combined):
+
+            total = 0
+            for j, other in enumerate(combined):
+                if dominates(other, ind):  # 如果 other 支配 ind
+                    total += other.dom_count
+            ind.R = total
+        
+    
+        objectives_matrix = np.array([ind.objectives for ind in combined])
+        dist_matrix = distance_matrix(objectives_matrix, objectives_matrix)
+        np.fill_diagonal(dist_matrix, np.inf)  
+     
+        for i, ind in enumerate(combined):
+            dists = np.sort(dist_matrix[i])
+            ind.sigma_k = dists[k - 1] 
+            ind.D = 1 / (ind.sigma_k + 2) 
+        
+    
+        for ind in combined:
+            ind.F = ind.R + ind.D
+        
+        if gen % 10 == 0:
+           
+            pop_objectives = []
+            for ind in population:
+                if ind.objectives[0] is not None:
+                    pop_objectives.append(ind.objectives)
+            
+            if pop_objectives:  
+                pop_objectives = np.array(pop_objectives)
+        
+               
+                if archive:
+                    archive_objectives = np.array([ind.objectives for ind in archive])
+        end2 = time.time()
+        print(2)
+        print(end2-start2)
+        
+        start3 = time.time()
+ 
+        new_archive = [ind for ind in combined if ind.F<1]
+        
+ 
+        if len(new_archive) < archive_size:
+      
+            remaining = [ind for ind in combined]
+            remaining.sort(key=lambda x: x.F)
+            for i in range(archive_size - len(new_archive)):
+              new_archive.append(remaining[0])
+              #print(remaining[0])
+        
+  
+        elif len(new_archive) > archive_size:
+          
+            new_archive = truncate_archive(new_archive, archive_size)
+        end3 = time.time()
+        print(3)
+        print(end3-start3)
+        
+        start4 = time.time()
+     
+        
+        archive = new_archive
+       
+        rejected_individuals = [ind for ind in combined if ind not in new_archive]
+  
+        if len(new_archive) > 0 and len(rejected_individuals) > 0:
+          
+            archive_samples = []
+            for ind in new_archive:
+                algo_idx = algorithms.index(ind.algo_name)
+                algo_one_hot = np.zeros(len(algorithms))
+                algo_one_hot[algo_idx] = 1
+                normalized_chunk = ind.chunk_size / chunk_sizes
+                features = np.concatenate([algo_one_hot, [normalized_chunk]])
+                archive_samples.append(features)
+            archive_samples = np.array(archive_samples)
+            
+         
+            rejected_samples = []
+            for ind in rejected_individuals:
+                algo_idx = algorithms.index(ind.algo_name)
+                algo_one_hot = np.zeros(len(algorithms))
+                algo_one_hot[algo_idx] = 1
+                normalized_chunk = ind.chunk_size / chunk_sizes
+                features = np.concatenate([algo_one_hot, [normalized_chunk]])
+                rejected_samples.append(features)
+            rejected_samples = np.array(rejected_samples)
+            
+    
+            gan.train(archive_samples, rejected_samples, epochs=50, batch_size=16)
+        
+        end4 = time.time()
+        print(4)
+        print(end4-start4)
+        
+        start5 = time.time()
+     
+      
+        new_population = []
+        n_gan_samples = int(pop_size * 0.5)  # 80%用GAN生成
+        
+   
+        gan_samples = gan.generate_samples(archive_samples,n_gan_samples)
+        
+  
+        for sample in gan_samples:
+          
+            algo_probs = sample[:len(algorithms)]
+            algo_idx = np.argmax(algo_probs)
+            algo_name = algorithms[algo_idx]
+            
+         
+            normalized_chunk = sample[-1]
+            chunk_size = int(normalized_chunk * chunk_sizes)
+            chunk_size = max(1, min(chunk_size, chunk_sizes))  
+            
+            new_population.append(Individual(algo_name, chunk_size))
+        
+
+        parents = []
+        for _ in range(pop_size - n_gan_samples):
+                candidates = random.sample(archive, 2)
+                winner = min(candidates, key=lambda x: x.F)
+                parents.append(winner)
+        for i in range(0,pop_size - n_gan_samples,2):
+                                  
+                parent1 = parents[i]
+                parent2 = parents[i + 1] if i + 1 < (pop_size - n_gan_samples) else parents[0]
+                
+      
+                if random.random() < 0.8:  
+                    algo_child = parent1.algo_name if random.random() < 0.5 else parent2.algo_name
+                    chunk_child = int(np.mean([parent1.chunk_size, parent2.chunk_size]))
+                else:
+                    algo_child = parent1.algo_name
+                    chunk_child = parent1.chunk_size
+                
+               
+                if random.random() < 0.1:  
+                    algo_child = random.choice(algorithms)
+                if random.random() < 0.1:
+                    chunk_child = random.randint(1,chunk_sizes)
+                
+                child = Individual(algo_child, chunk_child)
+                new_population.append(child)
+        
+        population = new_population
+        end5 = time.time()
+        print(5)
+        print(end5-start5)
+
+    pareto_front = []
+    for ind in archive:
+        if not any(dominates(other, ind) for other in archive):
+            pareto_front.append(ind)
+
+    
+    return pareto_front,hv_history
+
+if __name__ == "__main__":
+    csv_path = ''
+   
+    start2 = time.time()
+    pareto_front2,hv_improved = spea2_with_ganimproved(
+        csv_path,
+        pop_size=64,
+        max_generations=160,
+        archive_size=32
+    )
+    end2 = time.time()
