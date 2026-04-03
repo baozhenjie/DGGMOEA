@@ -446,7 +446,7 @@ def spea2_with_ganimproved(csv_path, pop_size=20, max_generations=10, archive_si
 
             total = 0
             for j, other in enumerate(combined):
-                if dominates(other, ind):  # 如果 other 支配 ind
+                if dominates(other, ind):  
                     total += other.dom_count
             ind.R = total
         
@@ -543,7 +543,7 @@ def spea2_with_ganimproved(csv_path, pop_size=20, max_generations=10, archive_si
      
       
         new_population = []
-        n_gan_samples = int(pop_size * 0.5)  # 80%用GAN生成
+        n_gan_samples = int(pop_size * 0.5)
         
    
         gan_samples = gan.generate_samples(archive_samples,n_gan_samples)
