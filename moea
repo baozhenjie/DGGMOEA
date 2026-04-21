@@ -20,13 +20,13 @@ from scipy.spatial import ConvexHull
 import os
 import ore  
 import random   
-def truncate_archive(archive, target_size):Def truncate_archive(archive, target_size)：
+def truncate_archive(archive, target_size):
  
-    while len(archive) > target_size:而len(archive) > target_size：
+    while len(archive) > target_size:
       
         objectives_matrix = np.array([ind.objectives for ind in archive])
         dist_matrix = distance_matrix(objectives_matrix, objectives_matrix)
-        np.fill_diagonal(dist_matrix, np.inf)  n
+        np.fill_diagonal(dist_matrix, np.inf) 
         
 
         min_dists = np.min(dist_matrix, axis=1)
