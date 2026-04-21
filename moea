@@ -1,37 +1,37 @@
 from pygmo import hypervolume
-from tensorflow.keras.models import Model, Sequential从tensorflow.keras.models导入模型，顺序
-from tensorflow.keras.layers import Dense, Input, LeakyReLU, BatchNormalization, Dropout从tensorflow.keras.layers导入Dense， Input, LeakyReLU, BatchNormalization, Dropout
-from tensorflow.keras.optimizers import Adam从tensorflow.keras.optimizers导入Adam
-import tensorflow as tf   导入tensorflow为tf
-import time   导入的时间
-import random   进口随机
-import numpy as np   导入numpy为np
-import pandas as pd   以pd方式导入熊猫
-import matplotlib.pyplot as plt进口matplotlib。Pyplot为PLT
-from Crypto.Cipher import AES从加密。密码导入AES
-from Crypto.Util.Padding import pad, unpad从Crypto.Util.Padding导入pad， unpad
-from Crypto.Random import get_random_bytes从加密。随机导入get_random_bytes
-import lzma, zlib, lz4.frame, snappy, bz2导入lzma， zlib, lz4.frame, snappy, bz2
-from cassandra.cluster import Cluster卡桑德拉。集群导入
-from cassandra.auth import PlainTextAuthProvider卡桑德拉。auth导入PlainTextAuthProvider
-import uuid   进口uuid
-from scipy.spatial import distance_matrix从scipy。空间导入距离矩阵
-from scipy.spatial import ConvexHull从scipy。空间导入ConvexHull
-import os   进口的
-import ore   进口矿石
-import random   进口随机
+from tensorflow.keras.models import Model, Sequential
+from tensorflow.keras.layers import Dense, Input, LeakyReLU, BatchNormalization, Dropout
+from tensorflow.keras.optimizers import Adam
+import tensorflow as tf   
+import time   
+import random   
+import numpy as np   
+import pandas as pd  
+import matplotlib.pyplot as plt
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad, unpad
+from Crypto.Random import get_random_bytes
+import lzma, zlib, lz4.frame, snappy, bz2
+from cassandra.cluster import Cluster
+from cassandra.auth import PlainTextAuthProvider
+import uuid 
+from scipy.spatial import distance_matrix
+from scipy.spatial import ConvexHull
+import os
+import ore  
+import random   
 def truncate_archive(archive, target_size):Def truncate_archive(archive, target_size)：
  
     while len(archive) > target_size:而len(archive) > target_size：
       
-        objectives_matrix = np.array([ind.objectives for ind in archive])objecves_matrix = np.array（[索引]）档案查找目标[]
-        dist_matrix = distance_matrix(objectives_matrix, objectives_matrix)Dist_matrix = distance_matrix（objectives_matrix, objectives_matrix）
-        np.fill_diagonal(dist_matrix, np.inf)  np.fill_diagonal (dist_matrix np.inf)
+        objectives_matrix = np.array([ind.objectives for ind in archive])
+        dist_matrix = distance_matrix(objectives_matrix, objectives_matrix)
+        np.fill_diagonal(dist_matrix, np.inf)  n
         
 
-        min_dists = np.min(dist_matrix, axis=1)Min_dists = np。分钟(dist_matrix轴= 1)
+        min_dists = np.min(dist_matrix, axis=1)
     
-        min_idx = np.argmin(min_dists)Min_idx = np.argmin（min_dists）
+        min_idx = np.argmin(min_dists)
         
       
         archive.pop(min_idx)
