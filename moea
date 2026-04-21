@@ -328,7 +328,7 @@ class Individual:
         compressed_data, compress_time = compress_data(raw_data, self.algo_name)
 
         
-        total_compressed_size= len(compressed_data)+...
+        total_compressed_size= (len(compressed_data)/len(raw_data))*(n*l)
 
     
         chunk_total_time = (fw*compress_time + fw*encrypt_time + fw*upload_time + 
