@@ -348,9 +348,7 @@ class Individual:
             
      
         decompressed_data, decompress_time = decompress_data(decrypted_data, self.algo_name)
-       
-        download_time =download_time
-        upload_time = upload_time
+
     
         chunk_total_time = (fw*compress_time + fw*encrypt_time + fw*upload_time + 
                            (fw+fr)*download_time + (fw+fr)*decrypt_time + (fw+fr)*decompress_time)
